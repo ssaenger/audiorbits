@@ -19,11 +19,13 @@ onmessage = function (e) {
     // get local vars
     let num_subsets = sett.num_subsets_per_level;
     let num_points_subset = sett.num_points_per_subset;
+    const num_coor = sett.enable_wrapping ? 3 : 2;
+    let wrapping_value = sett.wrapping_value;
 
     // create a buffer thats big enough to hold the x,y,z corrdinate
     // of all subsets * points of the level.
     // may seem ridiclous, but is actually the fastest way to transfer.
-    let xyzBuff = new Float32Array(num_subsets * num_points_subset * 2);
+    let xyzBuff = new Float32Array(num_subsets * num_points_subset * num_coor);
 
     let scale_factor_l = sett.scaling_factor;
     let tunnel = sett.generate_tunnel;
@@ -63,7 +65,7 @@ onmessage = function (e) {
             else if (y > yMax) yMax = y;
 
             // calculate x buffer location
-            bid = (s * num_points_subset + i) * 2;
+            bid = (s * num_points_subset + i) * num_coor;
             // set y coordinate first
             xyzBuff[bid + 1] = y = al - x;
             // set x coordinate
@@ -86,21 +88,28 @@ onmessage = function (e) {
     for (s = 0; s < num_subsets; s++) {
         for (i = 0; i < num_points_subset; i++) {
             // calculate x buffer location
-            bid = (s * num_points_subset + i) * 2;
+            bid = (s * num_points_subset + i) * num_coor;
             // re-scale x position
             x = scaleX * (xyzBuff[bid] - xMin) - scale_factor_l;
             // re-scale y position
             y = scaleY * (xyzBuff[bid + 1] - yMin) - scale_factor_l;
+
             // tunnel processing to take certain points from the center
             // and move them outwards in a circular way
-            if (tunnel) {
+            if (num_coor == 2 || tunnel) {
                 dist = getPointDistance(0, 0, x, y) / scale_factor_l;
-                //print("pd: " + dist + ",   inner: " + iradius);
-                if (dist < iradius) {
-                    scaling = dist / iradius;
-                    outer = scaling / oradius;
-                    x = x / scaling + x * outer;
-                    y = y / scaling + y * outer;
+                if (tunnel) {
+                    //print("pd: " + dist + ",   inner: " + iradius);
+                    if (dist < iradius) {
+                        scaling = dist / iradius;
+                        outer = scaling / oradius;
+                        x = x / scaling + x * outer;
+                        y = y / scaling + y * outer;
+                    }
+                }
+                if (num_coor == 3) {
+                    z = dist * wrapping_value;
+                    xyzBuff[bid + 2] = z;
                 }
             }
             xyzBuff[bid] = x;

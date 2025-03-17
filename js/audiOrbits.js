@@ -70,6 +70,8 @@ var audiOrbits = {
 		rotation_val: 0,
 		custom_fps: false,
 		fps_value: 60,
+		enable_wrapping: false,
+		wrapping_value: 1200,
 		minimum_brightness: 10,
 		minimum_saturation: 10,
 		audio_multiplier: 2,
@@ -184,11 +186,14 @@ var audiOrbits = {
 		var _reInit = ["texture_size", "stats_option", "field_of_view", "fog_thickness", "icue_mode",
 			"scaling_factor", "camera_bound", "num_points_per_subset", "num_subsets_per_level",
 			"num_levels", "level_depth", "level_shifting", "bloom_filter", "lut_filter", "mirror_shader",
-			"mirror_invert", "fx_antialiasing", "blur_strength", "custom_fps", "shader_quality"];
+			"mirror_invert", "fx_antialiasing", "blur_strength", "custom_fps", "enable_wrapping", "shader_quality"];
+
+		var _regen = ["wrapping_value"];
 
 		var self = audiOrbits;
 		var sett = self.settings;
 		var reInitFlag = false;
+		var reGenFlag = false;
 
 		// possible apply-targets
 		var settStorage = [sett, weas.settings, weicue.settings];
@@ -217,6 +222,7 @@ var audiOrbits = {
 
 					// set re-init flag if value changed and included in list
 					reInitFlag = reInitFlag || b4Setting != storage[setting] && _reInit.includes(setting);
+					reGenFlag = reGenFlag || b4Setting != storage[setting] && _regen.includes(setting);
 				}
 			}
 			// invalid?
@@ -269,6 +275,35 @@ var audiOrbits = {
 		if (sett.parallax_option == 0) self.mouseX = self.mouseY = 0;
 		// set Cursor for "fixed" parallax mode
 		if (sett.parallax_option == 3) self.positionMouseAngle(sett.parallax_angle);
+
+		if (!reInitFlag && reGenFlag && sett.enable_wrapping) {
+			//Go through the list of children updating the z location of each point
+			sett.wrapping_value = Number(sett.wrapping_value);
+			let getPointDistance = function (x1, y1, x2, y2) {
+				let a = x1 - x2;
+				let b = y1 - y2;
+				return Math.sqrt(a * a + b * b);
+			};
+			while (self.afterRenderQueue.length > 0) {
+				self.afterRenderQueue.shift();
+			}
+			for (var k = 0; k < sett.num_levels; k++) {
+				for (var s = 0; s < sett.num_subsets_per_level; s++) {
+					let a = self.levels[k].subsets[s].child.geometry.attributes.position.array;
+					for (var p = 0; p < sett.num_points_per_subset; p += 3) {
+						a[p + 2] = (getPointDistance(0, 0, a[p], a[p + 1]) / sett.scaling_factor) * sett.wrapping_value;
+					}
+					self.levels[k].subsets[s].child.geometry.attributes.position.needsUpdate = true;
+				}
+			}
+			for (i = 0; i < self.scene.children.length; i++) {
+				self.scene.children[i].needsUpdate = false;
+			}
+			// prepare new orbit levels for the first reset/moveBack already
+			for (var l = 0; l < sett.num_levels; l++) {
+				//self.generateLevel(l);
+			}
+		} 
 
 		// have render-relevant settings been changed?
 		return reInitFlag;
@@ -522,6 +557,7 @@ var audiOrbits = {
 	initGeometries: function (texture) {
 		var self = audiOrbits;
 		var sett = self.settings;
+		const num_coor = sett.enable_wrapping ? 3 : 2;
 		print("building geometries.");
 		// material properties
 		var matprops = {
@@ -540,8 +576,8 @@ var audiOrbits = {
 				// create particle geometry from orbit vertex data
 				var geometry = new THREE.BufferGeometry();
 
-				// position attribute (2 vertices per point, thats pretty illegal)
-				geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(sett.num_points_per_subset * 2), 2));
+				// position attribute
+				geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(sett.num_points_per_subset * num_coor), num_coor));
 
 				// create particle material with map & size
 				var material = new THREE.PointsMaterial(matprops);
@@ -809,7 +845,7 @@ var audiOrbits = {
 
 	// render a single frame with the given delta
 	animateFrame: function (ellapsed, deltaTime) {
-		print("| animate | ellapsed: " + ellapsed + ", delta: " + deltaTime);
+		//print("| animate | ellapsed: " + ellapsed + ", delta: " + deltaTime);
 		var self = audiOrbits;
 		var sett = self.settings;
 
@@ -876,6 +912,10 @@ var audiOrbits = {
 		var defSat = sett.default_saturation / 100;
 		var defBri = sett.default_brightness / 100;
 		var sixtyDelta = deltaTime * 2000;
+		// If enable_wrapping is enabled with a negative wrapping value, then we want to make sure
+		// edges of levels are behind the camera before resetting its position
+		var wrap_value = sett.enable_wrapping ? sett.wrapping_value : 0;
+		var reset_pos = sett.enable_wrapping && wrap_value < 0 ? self.camera.position.z - wrap_value : self.camera.position.z;
 
 		var i, child, freqData, freqLvl, hsl, tmpHue, setHue, setSat, setLight;
 		// position all objects
@@ -883,7 +923,7 @@ var audiOrbits = {
 			child = self.scene.children[i];
 
 			// reset if out of bounds
-			if (child.position.z > self.camera.position.z) {
+			if (child.position.z > reset_pos) {
 				// offset to back
 				//print("moved back child: " + i);
 				child.position.z -= sett.num_levels * sett.level_depth;
@@ -941,7 +981,7 @@ var audiOrbits = {
 					setLight += (defBri - setLight) / sixtyDelta;
 			}
 			// update dat shit
-			print("setHSL | child: " + i + " | h: " + setHue + " | s: " + setSat + " | l: " + setLight);
+			//print("setHSL | child: " + i + " | h: " + setHue + " | s: " + setSat + " | l: " + setLight);
 			child.myMaterial.color.setHSL(self.clamp(setHue, 0, 1, true), self.clamp(setSat, 0, 1), self.clamp(setLight, 0, 1));
 		}
 	},
@@ -967,6 +1007,7 @@ var audiOrbits = {
 
 		var self = audiOrbits;
 		var sett = self.settings;
+		const num_coor = sett.enable_wrapping ? 3 : 2;
 		self.levelWorkersRunning--;
 
 		let xyzBuf = new Float32Array(ldata.xyzBuff);
@@ -976,9 +1017,9 @@ var audiOrbits = {
 		for (let s = 0; s < sett.num_subsets_per_level; s++) {
 			self.afterRenderQueue.push(() => {
 				// copy start index
-				var from = (s * sett.num_points_per_subset) * 2;
+				var from = (s * sett.num_points_per_subset) * num_coor;
 				// copy end index
-				var tooo = (s * sett.num_points_per_subset + sett.num_points_per_subset) * 2;
+				var tooo = (s * sett.num_points_per_subset + sett.num_points_per_subset) * num_coor;
 				// slice & set xyzBuffer data, then update child
 				subbs[s].child.geometry.attributes.position.set(xyzBuf.slice(from, tooo), 0);
 				subbs[s].child.needsUpdate = true;
